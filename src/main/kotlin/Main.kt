@@ -1,137 +1,158 @@
+
+import java.lang.System.currentTimeMillis
 import java.net.HttpURLConnection
-import java.net.URI
 import java.net.URL
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import kotlin.system.measureTimeMillis
 
-val PIPES = mutableListOf(1, 2, 3)
+const val PIPE_VALUE_ESTIMATE_TIME = 6000 // 11250
 val PATTERN = Regex("""\d+""")
-val client = HttpClient.newBuilder().build()
 
-enum class Method {
-    GET, PUT, POST
+enum class Status {
+    Pinging, Collecting
 }
+
+data class Robot(
+    var resources: Int = 0,
+    var gameTime: Int = 0,
+    var collectingValue: Int = 0,
+    var minDelayToCollect: Long = 200,
+)
+
+enum class Direction { Up, Down, Unknown }
+
+data class Pipe(
+    val number: Int, // 1, 2, 3
+    var value: Int = 0,
+    var delay: Int = 3000,
+    var timeOfCollectedValue: Int = 0,
+    var direction: Direction = Direction.Unknown
+    //    val pipeValue: Int = value * delay
+)
 
 enum class Modifiers(cost: Int) {
     reverse(40), double(50), slow(40), shuffle(10), min(10)
 }
+
+enum class Method { GET, PUT, POST }
 
 fun main(args: Array<String>) {
     val host = args[0]
     val apiUrl = "http://$host/api"
     val token = args[1]
 
-    fun collect(pipe: Int) = sendRequest(
+    val robot = Robot()
+    val observedPipes = listOf(
+        Pipe(1), Pipe(2), Pipe(3)
+    )
+
+    fun sendRequest(
+        pipe: Pipe,
+        method: String,
+        url: String,
+        token: String,
+        type: String? = null
+    ): Pipe {
+        val t1 = currentTimeMillis()
+        with(URL(url).openConnection() as HttpURLConnection) {
+            requestMethod = method
+            setRequestProperty("Authorization", "Bearer $token")
+            doOutput = true
+
+            if (type != null) {
+                setRequestProperty("Content-Type", "application/json")
+                outputStream.bufferedWriter().use { it.write("""{"type":"$type"}""") }
+            }
+
+            var value = 0
+            when (responseCode) {
+                200 -> inputStream.bufferedReader().use {
+                    if (method != Method.POST.name) value = PATTERN.find(it.readText())?.value?.toInt() ?: 0
+                    else println("Applied modifier $type to pipe with url: $url")
+                }
+
+                422 -> println("Failed to apply modifier")
+                else -> println("Unexpected status code $responseCode")
+            }
+
+            if (pipe.value != 0)
+                pipe.direction = if (value > pipe.value) Direction.Up else Direction.Down
+            pipe.value = value
+            pipe.delay = (currentTimeMillis() - t1).toInt()
+
+            robot.resources += value
+            robot.gameTime += pipe.delay
+
+            pipe.timeOfCollectedValue = robot.gameTime
+
+            println("collect ${pipe.value} in ${pipe.delay}")
+            println("total resources: ${robot.resources}")
+
+            return pipe
+        }
+    }
+
+    fun Pipe.collect() = sendRequest(
+        pipe = this,
         method = Method.PUT.name,
-        url = "$apiUrl/pipe/$pipe",
+        url = "$apiUrl/pipe/${this.number}",
         token = token
     )
-
-    fun value(pipe: Int) = sendRequest(
+    fun Pipe.value() = sendRequest(
+        pipe = this,
         method = Method.GET.name,
-        url = "$apiUrl/pipe/$pipe/value",
+        url = "$apiUrl/pipe/${this.number}/value",
         token = token
     )
-
-    fun modifier(pipe: Int, type: String) = sendRequest(
+    fun Pipe.modifier(type: String) = sendRequest(
+        pipe = this,
         method = Method.POST.name,
-        url = "$apiUrl/pipe/$pipe/modifier",
+        url = "$apiUrl/pipe/${this.number}/modifier",
         token = token,
         type = type
     )
 
-    var resources = 0
-    var timeInMillisPassedFromStart = 0L
-
-    fun timeForOnePipeCollect(pipe: Int) = measureTimeMillis {
-        resources += collect(pipe).body.toInt() // FormatException, cos this my prev solution, update it with other network layer
+    fun collectInfoAboutPipes(exclude: Pipe? = null) {
+        if (exclude != null) {
+            val pipes = observedPipes.toMutableList()
+            pipes.removeIf { it.number == exclude.number }
+            pipes.forEach {
+                it.collect()
+            }
+        }
+        else {
+            observedPipes.forEach {
+                it.collect()
+            }
+        }
     }
 
-    val myPipe = PIPES.random() // 1, 2, 3
-    PIPES.remove(myPipe)
-    var timeInMillis = timeForOnePipeCollect(myPipe)
+    collectInfoAboutPipes()
+
+    fun findBestPipe(): Pipe {
+        var bestPipe = observedPipes.first()
+        var pipeValue = 0
+
+        observedPipes.forEach {
+            var localPipeValue = 0
+            var localValue = it.value
+            for (i in 0..PIPE_VALUE_ESTIMATE_TIME step it.delay)
+                localPipeValue += localValue++
+
+            if (localPipeValue > pipeValue) {
+                pipeValue = localPipeValue
+                bestPipe = it
+            }
+        }
+        return bestPipe
+    }
+
+    var bestPipe = findBestPipe()
     while (true) {
-        timeInMillisPassedFromStart += timeInMillis
-        timeInMillis = timeForOnePipeCollect(myPipe)
-        println(timeInMillis)
-        if (timeInMillis > 350) modifier(myPipe, Modifiers.shuffle.name)
-//        else if (timeInMillisPassedFromStart % 7500 < 600L) for (pipe in PIPES) {
-//            modifier(pipe, Modifiers.min.name)
-//            modifier(pipe, Modifiers.min.name)
-//        }
-    }
-}
-
-fun value(token: String, url: String): Int {
-    val req = HttpRequest.newBuilder()
-        .header("Authorization", "Bearer $token")
-        .uri(URI(url)).GET().build()
-
-    val response = client.send(req, HttpResponse.BodyHandlers.ofString())
-    println(response.body())
-    return if (response.statusCode() == 200) PATTERN.find(response.body())!!.value.toInt()
-    else 0
-}
-
-fun collect(token: String, url: String): Int {
-    val req = HttpRequest.newBuilder()
-        .header("Authorization", "Bearer $token")
-        .uri(URI(url)).PUT(HttpRequest.BodyPublishers.noBody()).build()
-
-    val response = client.send(req, HttpResponse.BodyHandlers.ofString())
-    println(response.body())
-    return if (response.statusCode() == 200) PATTERN.find(response.body())!!.value.toInt()
-    else 0
-}
-
-fun modifier(token: String, url: String, type: String) {
-    val req = HttpRequest.newBuilder()
-        .header("Authorization", "Bearer $token")
-        .header("Content-Type", "application/json")
-        .uri(URI(url))
-        .POST(HttpRequest.BodyPublishers.ofString("{\"type\":\"$type\"}"))
-        .build()
-
-    val response = client.send(req, HttpResponse.BodyHandlers.ofString())
-    if (response.statusCode() == 200) println("Applied modifier $type to pipe $url")
-    else if (response.statusCode() == 422) println("Failed to apply modifier")
-    else println("Unexpected status code: ${response.statusCode()}")
-}
-
-data class Response(
-    val body: String,
-    val timeOut: Long
-)
-
-fun sendRequest(
-    method: String,
-    url: String,
-    token: String,
-    type: String? = null
-): Response {
-    val startRequest = System.currentTimeMillis()
-    with(URL(url).openConnection() as HttpURLConnection) {
-        requestMethod = method
-        setRequestProperty("Authorization", "Bearer $token")
-        doOutput = true
-
-        if (type != null) {
-            setRequestProperty("Content-Type", "application/json")
-            outputStream.bufferedWriter().use { it.write("{\"type\":\"$type\"}") }
+        bestPipe.collect()
+        bestPipe = findBestPipe()
+        if (robot.gameTime % 60000 <= 500) {
+            if (bestPipe.delay > 250) {
+                collectInfoAboutPipes(exclude = bestPipe)
+            }
         }
-
-        val stringBuilder = StringBuilder()
-        inputStream.bufferedReader().use {
-            val response = it.readText()
-            println(response)
-            stringBuilder.append(response)
-        }
-
-        return Response(
-            body = stringBuilder.toString(),
-            timeOut = System.currentTimeMillis() - startRequest
-        )
     }
 }
