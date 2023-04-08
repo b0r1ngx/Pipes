@@ -5,12 +5,18 @@ import java.net.URL
 const val PIPE_MIN_VALUE = 1
 const val PIPE_MAX_VALUE = 10
 const val PIPE_VALUE_ESTIMATE_TIME = 4000 // 6000, 11250
-const val TIME_BETWEEN_PING_REQUESTS = 200000 // 110000
+const val TIME_TO_SWITCH_STATUS = 40000
+const val TIME_BETWEEN_PING_REQUESTS = 160000 // 20000, 40000 too much, 110000 idk
 val PATTERN = Regex("""\d+""")
+
+enum class Status {
+    Pinging, Collecting
+}
 
 data class Robot(
     var resources: Int = 0,
     var gameTime: Int = 0,
+    var status: Status = Status.Pinging,
     var collectingValue: Int = 0,
     var minDelayToLockCollect: Long = 500,
 )
@@ -116,10 +122,12 @@ fun main(args: Array<String>) {
             pipes.removeAt(exclude.number - 1)
             pipes.forEach {
                 it.collect()
+                if (it.delay > 2) return@forEach
                 it.collect()
             }
         } else observedPipes.forEach {
             it.collect()
+            if (it.delay > 2) return@forEach
             it.collect()
         }
     }
@@ -133,7 +141,7 @@ fun main(args: Array<String>) {
 
         when (direction) {
             Direction.Down -> for (tick in 0 until valueTickTimes) {
-                newValue++
+                newValue--
                 if (newValue < 1) newValue = PIPE_MAX_VALUE
             }
 
@@ -177,12 +185,21 @@ fun main(args: Array<String>) {
     }
 
     collectInfoAboutPipes()
-    var bestPipe: Pipe
+    var bestPipe = findBestPipe()
     while (true) {
-        bestPipe = findBestPipe()
         bestPipe.collect()
-        if (bestPipe.delay > robot.minDelayToLockCollect && robot.gameTime % TIME_BETWEEN_PING_REQUESTS < bestPipe.delay + 50) {
-            collectInfoAboutPipes(exclude = bestPipe)
+
+        if (robot.status == Status.Pinging) {
+            if (bestPipe.delay > robot.minDelayToLockCollect - 200 && robot.gameTime % 10000 < bestPipe.delay) {
+                collectInfoAboutPipes(exclude = bestPipe)
+            }
+            if (robot.gameTime >= TIME_TO_SWITCH_STATUS) robot.status = Status.Collecting
+        } else {
+            if (bestPipe.delay > robot.minDelayToLockCollect || robot.gameTime % TIME_BETWEEN_PING_REQUESTS < bestPipe.delay) {
+                collectInfoAboutPipes(exclude = bestPipe)
+            }
         }
+
+        bestPipe = findBestPipe()
     }
 }
