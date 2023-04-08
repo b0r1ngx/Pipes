@@ -14,15 +14,9 @@ const val MIN_DELAY_TO_LOCK = 350
 
 val PATTERN = Regex("""\d+""")
 
-enum class Status {
-    Pinging, Collecting
-}
-
 data class Robot(
     var resources: Int = 0,
-    var gameTime: Int = 0,
-    var status: Status = Status.Pinging,
-    var collectingValue: Int = 0
+    var gameTime: Int = 0
 )
 
 enum class Direction { Up, Down, Unknown }
@@ -33,12 +27,7 @@ data class Pipe(
     var delay: Int = 3000,
     var timeOfCollectedValue: Int = 0,
     var direction: Direction = Direction.Unknown
-    //    val pipeValue: Int = value * delay
 )
-
-enum class Modifiers(cost: Int) {
-    reverse(40), double(50), slow(40), shuffle(10), min(10)
-}
 
 enum class Method { GET, PUT, POST }
 
@@ -58,7 +47,7 @@ fun main(args: Array<String>) {
         url: String,
         token: String,
         type: String? = null
-    ): Pipe {
+    ) {
         val t1 = currentTimeMillis()
         with(URL(url).openConnection() as HttpURLConnection) {
             requestMethod = method
@@ -93,8 +82,6 @@ fun main(args: Array<String>) {
 
             println("collect ${pipe.value} in ${pipe.delay}")
             println("total resources: ${robot.resources}")
-
-            return pipe
         }
     }
 
@@ -103,21 +90,6 @@ fun main(args: Array<String>) {
         method = Method.PUT.name,
         url = "$apiUrl/pipe/${this.number}",
         token = token
-    )
-
-    fun Pipe.value() = sendRequest(
-        pipe = this,
-        method = Method.GET.name,
-        url = "$apiUrl/pipe/${this.number}/value",
-        token = token
-    )
-
-    fun Pipe.modifier(type: String) = sendRequest(
-        pipe = this,
-        method = Method.POST.name,
-        url = "$apiUrl/pipe/${this.number}/modifier",
-        token = token,
-        type = type
     )
 
     fun collectInfoAboutPipes(exclude: Pipe? = null) {
@@ -192,20 +164,12 @@ fun main(args: Array<String>) {
     while (true) {
         bestPipe.collect()
 
-//        if (robot.status == Status.Pinging) {
         if (robot.gameTime % TIME_BETWEEN_PING_REQUESTS_PINGING <= bestPipe.delay) {
             if (bestPipe.delay > MIN_DELAY_TO_PING || notCollectTimes >= 3) {
                 collectInfoAboutPipes(exclude = bestPipe)
                 notCollectTimes = 0
             } else notCollectTimes++
         }
-//            if (robot.gameTime >= TIME_TO_SWITCH_STATUS) robot.status = Status.Collecting
-//        } else {
-//            if (robot.gameTime % TIME_BETWEEN_PING_REQUESTS <= bestPipe.delay) {
-//                if (bestPipe.delay > MIN_DELAY_TO_PING) collectInfoAboutPipes(exclude = bestPipe)
-//            }
-//        }
-
         bestPipe = locallyFindBestPipe()
     }
 }
