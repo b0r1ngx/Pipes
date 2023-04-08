@@ -5,12 +5,9 @@ import java.net.URL
 const val PIPE_MIN_VALUE = 1
 const val PIPE_MAX_VALUE = 10
 const val PIPE_VALUE_ESTIMATE_TIME = 11250
-const val TIME_TO_SWITCH_STATUS = 22000
 
-const val TIME_BETWEEN_PING_REQUESTS_PINGING = 10000
-const val TIME_BETWEEN_PING_REQUESTS = 70000 // 20000, 40000 too much, 110000 idk
-const val MIN_DELAY_TO_PING = 500
-const val MIN_DELAY_TO_LOCK = 350
+const val TIME_BETWEEN_PING_REQUESTS_PINGING = 15000
+const val MIN_DELAY_TO_PING = 450
 
 val PATTERN = Regex("""\d+""")
 
