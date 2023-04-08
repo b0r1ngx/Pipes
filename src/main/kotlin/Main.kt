@@ -4,9 +4,14 @@ import java.net.URL
 
 const val PIPE_MIN_VALUE = 1
 const val PIPE_MAX_VALUE = 10
-const val PIPE_VALUE_ESTIMATE_TIME = 4000 // 6000, 11250
-const val TIME_TO_SWITCH_STATUS = 40000
-const val TIME_BETWEEN_PING_REQUESTS = 160000 // 20000, 40000 too much, 110000 idk
+const val PIPE_VALUE_ESTIMATE_TIME = 11250
+const val TIME_TO_SWITCH_STATUS = 22000
+
+const val TIME_BETWEEN_PING_REQUESTS_PINGING = 10000
+const val TIME_BETWEEN_PING_REQUESTS = 70000 // 20000, 40000 too much, 110000 idk
+const val MIN_DELAY_TO_PING = 500
+const val MIN_DELAY_TO_LOCK = 350
+
 val PATTERN = Regex("""\d+""")
 
 enum class Status {
@@ -17,8 +22,7 @@ data class Robot(
     var resources: Int = 0,
     var gameTime: Int = 0,
     var status: Status = Status.Pinging,
-    var collectingValue: Int = 0,
-    var minDelayToLockCollect: Long = 500,
+    var collectingValue: Int = 0
 )
 
 enum class Direction { Up, Down, Unknown }
@@ -150,11 +154,10 @@ fun main(args: Array<String>) {
                 if (newValue > 10) newValue = PIPE_MIN_VALUE
             }
         }
-
         value = newValue
     }
 
-    fun findBestPipe(): Pipe {
+    fun locallyFindBestPipe(): Pipe {
         var bestPipe = Pipe()
         var pipeValue = 0
 
@@ -175,7 +178,6 @@ fun main(args: Array<String>) {
                     if (localValue > 10) localValue = PIPE_MIN_VALUE
                 }
             }
-
             if (localPipeValue > pipeValue) {
                 pipeValue = localPipeValue
                 bestPipe = it
@@ -185,21 +187,25 @@ fun main(args: Array<String>) {
     }
 
     collectInfoAboutPipes()
-    var bestPipe = findBestPipe()
+    var bestPipe = locallyFindBestPipe()
+    var notCollectTimes = 0
     while (true) {
         bestPipe.collect()
 
-        if (robot.status == Status.Pinging) {
-            if (bestPipe.delay > robot.minDelayToLockCollect - 200 && robot.gameTime % 10000 < bestPipe.delay) {
+//        if (robot.status == Status.Pinging) {
+        if (robot.gameTime % TIME_BETWEEN_PING_REQUESTS_PINGING <= bestPipe.delay) {
+            if (bestPipe.delay > MIN_DELAY_TO_PING || notCollectTimes >= 3) {
                 collectInfoAboutPipes(exclude = bestPipe)
-            }
-            if (robot.gameTime >= TIME_TO_SWITCH_STATUS) robot.status = Status.Collecting
-        } else {
-            if (bestPipe.delay > robot.minDelayToLockCollect || robot.gameTime % TIME_BETWEEN_PING_REQUESTS < bestPipe.delay) {
-                collectInfoAboutPipes(exclude = bestPipe)
-            }
+                notCollectTimes = 0
+            } else notCollectTimes++
         }
+//            if (robot.gameTime >= TIME_TO_SWITCH_STATUS) robot.status = Status.Collecting
+//        } else {
+//            if (robot.gameTime % TIME_BETWEEN_PING_REQUESTS <= bestPipe.delay) {
+//                if (bestPipe.delay > MIN_DELAY_TO_PING) collectInfoAboutPipes(exclude = bestPipe)
+//            }
+//        }
 
-        bestPipe = findBestPipe()
+        bestPipe = locallyFindBestPipe()
     }
 }
