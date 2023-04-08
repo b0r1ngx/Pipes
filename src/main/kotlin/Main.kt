@@ -4,10 +4,8 @@ import java.net.URL
 
 const val PIPE_MIN_VALUE = 1
 const val PIPE_MAX_VALUE = 10
-const val PIPE_VALUE_ESTIMATE_TIME = 11250
-
-const val TIME_BETWEEN_PING_REQUESTS_PINGING = 15000
 const val MIN_DELAY_TO_PING = 450
+const val TIME_TO_CALCULATE_ESTIMATE_PIPE_VALUE = 11337
 
 val PATTERN = Regex("""\d+""")
 
@@ -137,12 +135,12 @@ fun main(args: Array<String>) {
             var localValue = it.value
 
             when (it.direction) {
-                Direction.Down -> for (i in 0 until PIPE_VALUE_ESTIMATE_TIME step it.delay) {
+                Direction.Down -> for (i in 0 until TIME_TO_CALCULATE_ESTIMATE_PIPE_VALUE step it.delay) {
                     localPipeValue += localValue--
                     if (localValue < 1) localValue = PIPE_MAX_VALUE
                 }
 
-                else -> for (i in 0 until PIPE_VALUE_ESTIMATE_TIME step it.delay) {
+                else -> for (i in 0 until TIME_TO_CALCULATE_ESTIMATE_PIPE_VALUE step it.delay) {
                     localPipeValue += localValue++
                     if (localValue > 10) localValue = PIPE_MIN_VALUE
                 }
@@ -157,14 +155,29 @@ fun main(args: Array<String>) {
 
     collectInfoAboutPipes()
     var bestPipe = locallyFindBestPipe()
+
+    var collectTimes = 0
     var notCollectTimes = 0
+    var timeBetweenPingRequests = 13370
+
     while (true) {
         bestPipe.collect()
 
-        if (robot.gameTime % TIME_BETWEEN_PING_REQUESTS_PINGING <= bestPipe.delay) {
+        if (robot.gameTime % timeBetweenPingRequests <= bestPipe.delay) {
             if (bestPipe.delay > MIN_DELAY_TO_PING || notCollectTimes >= 3) {
                 collectInfoAboutPipes(exclude = bestPipe)
+                collectTimes++
                 notCollectTimes = 0
+            } else if (collectTimes >= 3) {
+                timeBetweenPingRequests = when {
+                    robot.gameTime <= 100000 -> 87331
+                    robot.gameTime <= 150000 -> 67331
+                    robot.gameTime <= 200000 -> 47331
+                    robot.gameTime <= 250000 -> 21337
+                    else -> 27331
+                }
+
+                collectTimes = 0
             } else notCollectTimes++
         }
         bestPipe = locallyFindBestPipe()
