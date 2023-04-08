@@ -1,26 +1,24 @@
-
 import java.lang.System.currentTimeMillis
 import java.net.HttpURLConnection
 import java.net.URL
 
-const val PIPE_VALUE_ESTIMATE_TIME = 6000 // 11250
+const val PIPE_MIN_VALUE = 1
+const val PIPE_MAX_VALUE = 10
+const val PIPE_VALUE_ESTIMATE_TIME = 4000 // 6000, 11250
+const val TIME_BETWEEN_PING_REQUESTS = 200000 // 110000
 val PATTERN = Regex("""\d+""")
-
-enum class Status {
-    Pinging, Collecting
-}
 
 data class Robot(
     var resources: Int = 0,
     var gameTime: Int = 0,
     var collectingValue: Int = 0,
-    var minDelayToCollect: Long = 200,
+    var minDelayToLockCollect: Long = 500,
 )
 
 enum class Direction { Up, Down, Unknown }
 
 data class Pipe(
-    val number: Int, // 1, 2, 3
+    val number: Int = 0, // 1, 2, 3
     var value: Int = 0,
     var delay: Int = 3000,
     var timeOfCollectedValue: Int = 0,
@@ -96,12 +94,14 @@ fun main(args: Array<String>) {
         url = "$apiUrl/pipe/${this.number}",
         token = token
     )
+
     fun Pipe.value() = sendRequest(
         pipe = this,
         method = Method.GET.name,
         url = "$apiUrl/pipe/${this.number}/value",
         token = token
     )
+
     fun Pipe.modifier(type: String) = sendRequest(
         pipe = this,
         method = Method.POST.name,
@@ -113,29 +113,60 @@ fun main(args: Array<String>) {
     fun collectInfoAboutPipes(exclude: Pipe? = null) {
         if (exclude != null) {
             val pipes = observedPipes.toMutableList()
-            pipes.removeIf { it.number == exclude.number }
+            pipes.removeAt(exclude.number - 1)
             pipes.forEach {
                 it.collect()
-            }
-        }
-        else {
-            observedPipes.forEach {
                 it.collect()
             }
+        } else observedPipes.forEach {
+            it.collect()
+            it.collect()
         }
     }
 
-    collectInfoAboutPipes()
+    fun Pipe.recalculateOutputValue() {
+        val valueTickTimes = (robot.gameTime - timeOfCollectedValue) % delay
+        if (valueTickTimes == 0) return
+
+        timeOfCollectedValue += delay * valueTickTimes
+        var newValue = value
+
+        when (direction) {
+            Direction.Down -> for (tick in 0 until valueTickTimes) {
+                newValue++
+                if (newValue < 1) newValue = PIPE_MAX_VALUE
+            }
+
+            else -> for (tick in 0 until valueTickTimes) {
+                newValue++
+                if (newValue > 10) newValue = PIPE_MIN_VALUE
+            }
+        }
+
+        value = newValue
+    }
 
     fun findBestPipe(): Pipe {
-        var bestPipe = observedPipes.first()
+        var bestPipe = Pipe()
         var pipeValue = 0
 
         observedPipes.forEach {
+            it.recalculateOutputValue()
+
             var localPipeValue = 0
             var localValue = it.value
-            for (i in 0..PIPE_VALUE_ESTIMATE_TIME step it.delay)
-                localPipeValue += localValue++
+
+            when (it.direction) {
+                Direction.Down -> for (i in 0 until PIPE_VALUE_ESTIMATE_TIME step it.delay) {
+                    localPipeValue += localValue--
+                    if (localValue < 1) localValue = PIPE_MAX_VALUE
+                }
+
+                else -> for (i in 0 until PIPE_VALUE_ESTIMATE_TIME step it.delay) {
+                    localPipeValue += localValue++
+                    if (localValue > 10) localValue = PIPE_MIN_VALUE
+                }
+            }
 
             if (localPipeValue > pipeValue) {
                 pipeValue = localPipeValue
@@ -145,14 +176,13 @@ fun main(args: Array<String>) {
         return bestPipe
     }
 
-    var bestPipe = findBestPipe()
+    collectInfoAboutPipes()
+    var bestPipe: Pipe
     while (true) {
-        bestPipe.collect()
         bestPipe = findBestPipe()
-        if (robot.gameTime % 60000 <= 500) {
-            if (bestPipe.delay > 250) {
-                collectInfoAboutPipes(exclude = bestPipe)
-            }
+        bestPipe.collect()
+        if (bestPipe.delay > robot.minDelayToLockCollect && robot.gameTime % TIME_BETWEEN_PING_REQUESTS < bestPipe.delay + 50) {
+            collectInfoAboutPipes(exclude = bestPipe)
         }
     }
 }
