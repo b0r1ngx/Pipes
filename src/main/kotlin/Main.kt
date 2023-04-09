@@ -4,8 +4,9 @@ import java.net.URL
 
 const val PIPE_MIN_VALUE = 1
 const val PIPE_MAX_VALUE = 10
-const val MIN_DELAY_TO_PING = 450
-const val TIME_TO_CALCULATE_ESTIMATE_PIPE_VALUE = 11337
+const val MIN_TIME_BETWEEN_REQUESTS = 13370
+const val TIME_TO_NOT_COLLECT_SECOND_TIME_WHEN_PING = 6000
+const val TIME_TO_CALCULATE_ESTIMATE_PIPE_VALUE = 12000
 
 val PATTERN = Regex("""\d+""")
 
@@ -38,14 +39,14 @@ fun main(args: Array<String>) {
 
     fun sendRequest(
         pipe: Pipe,
-        method: String,
+        method: Method,
         url: String,
         token: String,
         type: String? = null
     ) {
         val t1 = currentTimeMillis()
         with(URL(url).openConnection() as HttpURLConnection) {
-            requestMethod = method
+            requestMethod = method.name
             setRequestProperty("Authorization", "Bearer $token")
             doOutput = true
 
@@ -57,7 +58,7 @@ fun main(args: Array<String>) {
             var value = 0
             when (responseCode) {
                 200 -> inputStream.bufferedReader().use {
-                    if (method != Method.POST.name) value = PATTERN.find(it.readText())?.value?.toInt() ?: 0
+                    if (method != Method.POST) value = PATTERN.find(it.readText())?.value?.toInt() ?: 0
                     else println("Applied modifier $type to pipe with url: $url")
                 }
 
@@ -68,12 +69,13 @@ fun main(args: Array<String>) {
             if (pipe.value != 0)
                 pipe.direction = if (value > pipe.value) Direction.Up else Direction.Down
             pipe.value = value
-            pipe.delay = (currentTimeMillis() - t1).toInt()
-
             robot.resources += value
-            robot.gameTime += pipe.delay
 
-            pipe.timeOfCollectedValue = robot.gameTime
+            if (method == Method.PUT) {
+                pipe.delay = (currentTimeMillis() - t1).toInt()
+                robot.gameTime += pipe.delay
+                pipe.timeOfCollectedValue = robot.gameTime
+            }
 
             println("collect ${pipe.value} in ${pipe.delay}")
             println("total resources: ${robot.resources}")
@@ -82,8 +84,15 @@ fun main(args: Array<String>) {
 
     fun Pipe.collect() = sendRequest(
         pipe = this,
-        method = Method.PUT.name,
+        method = Method.PUT,
         url = "$apiUrl/pipe/${this.number}",
+        token = token
+    )
+
+    fun Pipe.value() = sendRequest(
+        pipe = this,
+        method = Method.GET,
+        url = "$apiUrl/pipe/${this.number}/value",
         token = token
     )
 
@@ -93,18 +102,22 @@ fun main(args: Array<String>) {
             pipes.removeAt(exclude.number - 1)
             pipes.forEach {
                 it.collect()
-                if (it.delay > 2) return@forEach
-                it.collect()
+                when {
+                    it.value == 10 || (TIME_TO_NOT_COLLECT_SECOND_TIME_WHEN_PING / it.delay) * it.value < 96 -> it.value()
+                    else -> it.collect()
+                }
             }
         } else observedPipes.forEach {
             it.collect()
-            if (it.delay > 2) return@forEach
-            it.collect()
+            when {
+                it.value == 10 || (TIME_TO_NOT_COLLECT_SECOND_TIME_WHEN_PING / it.delay) * it.value < 96 -> it.value()
+                else -> it.collect()
+            }
         }
     }
 
     fun Pipe.recalculateOutputValue() {
-        val valueTickTimes = (robot.gameTime - timeOfCollectedValue) % delay
+        val valueTickTimes = (robot.gameTime - timeOfCollectedValue) / delay
         if (valueTickTimes == 0) return
 
         timeOfCollectedValue += delay * valueTickTimes
@@ -126,7 +139,7 @@ fun main(args: Array<String>) {
 
     fun locallyFindBestPipe(): Pipe {
         var bestPipe = Pipe()
-        var pipeValue = 0
+        var bestPipeValue = 0
 
         observedPipes.forEach {
             it.recalculateOutputValue()
@@ -145,8 +158,8 @@ fun main(args: Array<String>) {
                     if (localValue > 10) localValue = PIPE_MIN_VALUE
                 }
             }
-            if (localPipeValue > pipeValue) {
-                pipeValue = localPipeValue
+            if (localPipeValue > bestPipeValue) {
+                bestPipeValue = localPipeValue
                 bestPipe = it
             }
         }
@@ -158,28 +171,29 @@ fun main(args: Array<String>) {
 
     var collectTimes = 0
     var notCollectTimes = 0
-    var timeBetweenPingRequests = 13370
+    var timeBetweenPingRequests = MIN_TIME_BETWEEN_REQUESTS
 
     while (true) {
         bestPipe.collect()
 
         if (robot.gameTime % timeBetweenPingRequests <= bestPipe.delay) {
-            if (bestPipe.delay > MIN_DELAY_TO_PING || notCollectTimes >= 3) {
+            if (timeBetweenPingRequests > MIN_TIME_BETWEEN_REQUESTS) {
+                collectInfoAboutPipes(exclude = bestPipe)
+            } else if (notCollectTimes >= 3) {
                 collectInfoAboutPipes(exclude = bestPipe)
                 collectTimes++
                 notCollectTimes = 0
             } else if (collectTimes >= 3) {
                 timeBetweenPingRequests = when {
-                    robot.gameTime <= 100000 -> 87331
-                    robot.gameTime <= 150000 -> 67331
-                    robot.gameTime <= 200000 -> 47331
-                    robot.gameTime <= 250000 -> 21337
-                    else -> 27331
+                    robot.gameTime <= 150000 -> 90000
+                    robot.gameTime <= 200000 -> 60000
+                    robot.gameTime <= 250000 -> 30000
+                    else -> 120000
                 }
-
                 collectTimes = 0
             } else notCollectTimes++
         }
+
         bestPipe = locallyFindBestPipe()
     }
 }
