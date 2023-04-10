@@ -8,11 +8,11 @@ const val PIPE_MIN_VALUE = 1
 const val PIPE_MAX_VALUE = 10
 const val MIN_PING_TO_SIT = 200
 const val PING_TO_CHECK = 450
-const val TIME_BETWEEN_REQUESTS = 60000
+const val TIME_BETWEEN_REQUESTS = 40000
 const val TIME_TO_CALCULATE_ESTIMATE_PIPE_VALUE = 12000
 const val TIME_TO_NOT_COLLECT_SECOND_TIME_WHEN_PING = 6000
-const val TIME_TO_THINK_THAT_OTHER_FIND_BEST_PIPE = 3 * 1550 // 3000
-const val BAD_PIPE_DELAY = 850 // 1000
+const val TIME_TO_THINK_THAT_OTHER_FIND_BEST_PIPE = 3000 // 3 * 1550
+const val BAD_PIPE_DELAY = 800 // 1000
 
 val PATTERN = Regex("""\d+""")
 
@@ -20,8 +20,7 @@ enum class Status { PINGING, COLLECTING }
 
 data class Robot(
     var resources: Int = 0,
-    var gameTime: Int = 0,
-    var status: Status = Status.COLLECTING
+    var gameTime: Int = 0
 )
 
 enum class Direction { Up, Down, Unknown }
@@ -93,8 +92,28 @@ fun main(args: Array<String>) {
 
                 if (pipe.value != 0) {
                     pipe.direction = if (newValue > pipe.value) Direction.Up else Direction.Down
-                    pipe.peoplesOnPipe = newValue - pipe.value
-                    if (pipe.peoplesOnPipe >= 2) pipe.timeMostPeopleOnPipe = robot.gameTime
+                    pipe.peoplesOnPipe = when (pipe.direction) {
+                        Direction.Down -> {
+                            when (val peoplesOnPipe = pipe.value - newValue) {
+                                -9 -> 1
+                                -8 -> 2
+                                -7 -> 3
+                                -6 -> 4
+                                else -> peoplesOnPipe
+                            }
+                        }
+
+                        else -> {
+                            when (val peoplesOnPipe = newValue - pipe.value) {
+                                -9 -> 1
+                                -8 -> 2
+                                -7 -> 3
+                                -6 -> 4
+                                else -> peoplesOnPipe
+                            }
+                        }
+                    }
+                    if (pipe.peoplesOnPipe >= 3) pipe.timeMostPeopleOnPipe = robot.gameTime
                 }
                 pipe.value = newValue
 
@@ -169,12 +188,10 @@ fun main(args: Array<String>) {
         }
 
         recalculateOutputValue()
-        val pipeValuable = (TIME_TO_NOT_COLLECT_SECOND_TIME_WHEN_PING / delay) * value < 96
+        val isPipeValuable = (TIME_TO_NOT_COLLECT_SECOND_TIME_WHEN_PING / delay) * value < 90
         when {
-            value == 10 && direction == Direction.Down && peoplesOnPipe > 1 -> collect()
-            value == 10 && direction == Direction.Up -> value()
-            value == 5 && direction == Direction.Down -> value()
-            else -> collect()
+            delay < PING_TO_CHECK || isPipeValuable -> collect()
+            else -> value()
         }
     }
 
@@ -241,47 +258,22 @@ fun main(args: Array<String>) {
         return bestPipe
     }
 
-    fun checkPeopleOnOtherPipes(exclude: Pipe) {
-        val pipes = getShuffledObservedPipes(exclude = exclude)
-
-        var firstPingValue: Int
-        var secondPingValue: Int
-        pipes.forEach {
+    fun checkPeopleOnOtherPipes(exclude: Pipe) =
+        getShuffledObservedPipes(exclude = exclude).forEach {
             it.value()
-            firstPingValue = it.value
+            val firstPingValue = it.value
 
-            for (i in 0 until BAD_PIPE_DELAY step exclude.delay) // + 1 ; also maybe use findBestPipeLocally()
+            for (i in 0 until BAD_PIPE_DELAY step exclude.delay) // + 1 ; also maybe use findBestPipeLocally() between collect()
                 exclude.collect()
 
             it.value()
-            secondPingValue = it.value
+            val secondPingValue = it.value
 
             if (firstPingValue != secondPingValue)
                 it.collect()
 
-            if (it.delay < exclude.delay) {
-                robot.status = Status.COLLECTING
-                return
-            }
+            if (it.delay < exclude.delay) return
         }
-        robot.status = Status.COLLECTING
-    }
-
-    fun Pipe.predictNextValue(): Int {
-        var nextValue = value
-        when (direction) {
-            Direction.Down -> for (j in 0 until peoplesOnPipe - 1) {
-                nextValue--
-                if (nextValue < 1) nextValue = PIPE_MAX_VALUE
-            }
-
-            else -> for (j in 0 until peoplesOnPipe - 1) {
-                nextValue++
-                if (nextValue > 10) nextValue = PIPE_MIN_VALUE
-            }
-        }
-        return nextValue
-    }
 
     collectInfoAboutPipes(isFirstTime = true)
     var bestPipe = findBestPipe()
@@ -290,20 +282,13 @@ fun main(args: Array<String>) {
         with(bestPipe) {
             collect()
 
-            val nextValue = predictNextValue()
-
-            if (delay > PING_TO_CHECK
-                && robot.gameTime % TIME_BETWEEN_REQUESTS <= delay
-            ) collectInfoAboutPipes(exclude = this)
-
-            if (robot.gameTime >= 10000
-                && (timeMostPeopleOnPipe - robot.gameTime) >= TIME_TO_THINK_THAT_OTHER_FIND_BEST_PIPE
-                && delay > MIN_PING_TO_SIT
-                && peoplesOnPipe <= 2
-            ) robot.status = Status.PINGING
-
-            if (robot.status == Status.PINGING)
-                checkPeopleOnOtherPipes(exclude = this)
+            if (delay > BAD_PIPE_DELAY) collectInfoAboutPipes(exclude = this)
+            else if (delay > PING_TO_CHECK && robot.gameTime % TIME_BETWEEN_REQUESTS <= delay)
+                collectInfoAboutPipes(exclude = this)
+            else if (robot.gameTime >= 10000 &&
+                delay > MIN_PING_TO_SIT &&
+                (robot.gameTime - timeMostPeopleOnPipe) >= TIME_TO_THINK_THAT_OTHER_FIND_BEST_PIPE
+            ) checkPeopleOnOtherPipes(exclude = this)
 
             bestPipe = findBestPipe()
         }
