@@ -6,17 +6,22 @@ import java.net.URL
 
 const val PIPE_MIN_VALUE = 1
 const val PIPE_MAX_VALUE = 10
-const val MIN_PING_TO_SIT = 450
+const val MIN_PING_TO_SIT = 200
+const val PING_TO_CHECK = 450
 const val TIME_BETWEEN_REQUESTS = 60000
 const val TIME_TO_CALCULATE_ESTIMATE_PIPE_VALUE = 12000
 const val TIME_TO_NOT_COLLECT_SECOND_TIME_WHEN_PING = 6000
-const val TIME_TO_THINK_THAT_OTHER_FIND_BEST_PIPE = 3 * 1550
+const val TIME_TO_THINK_THAT_OTHER_FIND_BEST_PIPE = 3 * 1550 // 3000
+const val BAD_PIPE_DELAY = 850 // 1000
 
 val PATTERN = Regex("""\d+""")
 
+enum class Status { PINGING, COLLECTING }
+
 data class Robot(
     var resources: Int = 0,
-    var gameTime: Int = 0
+    var gameTime: Int = 0,
+    var status: Status = Status.COLLECTING
 )
 
 enum class Direction { Up, Down, Unknown }
@@ -29,6 +34,7 @@ data class Pipe(
     var direction: Direction = Direction.Unknown,
 
     var peoplesOnPipe: Int = 0,
+    var timeMostPeopleOnPipe: Int = 10000,
     var timeOfCollectedValue: Int = 0
 )
 
@@ -66,34 +72,44 @@ fun main(args: Array<String>) {
                 outputStream.bufferedWriter().use { it.write("""{"type":"$type"}""") }
             }
 
-            val isPost = method == Method.POST
+            if (method == Method.POST)
+                when (responseCode) {
+                    200 -> println("apply modifier $type to pipe with url: $url")
+                    422 -> println("failed to apply modifier")
+                    else -> println("$requestMethod: unexpected status code $responseCode")
+                }
+            else {
+                val newValue: Int
+                when (responseCode) {
+                    200 -> inputStream.bufferedReader().use {
+                        newValue = PATTERN.find(it.readText())?.value?.toInt() ?: 0
+                    }
 
-            var value = 0
-            when (responseCode) {
-                200 -> inputStream.bufferedReader().use {
-                    if (!isPost) value = PATTERN.find(it.readText())?.value?.toInt() ?: 0
-                    else println("Applied modifier $type to pipe with url: $url")
+                    else -> {
+                        println("$requestMethod: unexpected status code $responseCode")
+                        return
+                    }
                 }
 
-                422 -> println("Failed to apply modifier")
-                else -> println("Unexpected status code $responseCode")
-            }
-
-            if (!isPost) {
-                if (pipe.value != 0) pipe.direction = if (value > pipe.value) Direction.Up else Direction.Down
-                pipe.value = value
+                if (pipe.value != 0) {
+                    pipe.direction = if (newValue > pipe.value) Direction.Up else Direction.Down
+                    pipe.peoplesOnPipe = newValue - pipe.value
+                    if (pipe.peoplesOnPipe >= 2) pipe.timeMostPeopleOnPipe = robot.gameTime
+                }
+                pipe.value = newValue
 
                 if (method == Method.PUT) {
-                    robot.resources += value
+                    robot.resources += pipe.value
 
                     pipe.delay = (currentTimeMillis() - t1).toInt()
                     robot.gameTime += pipe.delay
                     pipe.timeOfCollectedValue = robot.gameTime
                 }
 
-                println("Time: ${robot.gameTime}")
-                println("Collect ${pipe.value} in ${pipe.delay}")
-                println("Total: ${robot.resources}")
+                println(
+                    "Time: ${robot.gameTime}. Peoples on pipe: ${pipe.peoplesOnPipe}. " +
+                            "Collected ${pipe.value} in ${pipe.delay} (total: ${robot.resources})"
+                )
             }
         }
     }
@@ -120,61 +136,77 @@ fun main(args: Array<String>) {
         type = type
     )
 
+    fun Pipe.recalculateOutputValue() {
+        val valueTickTimes = (robot.gameTime - timeOfCollectedValue) / delay
+        if (valueTickTimes == 0) return
+
+        timeOfCollectedValue += delay * valueTickTimes
+        var nextValue = value
+
+        when (direction) {
+            Direction.Down -> for (tick in 0 until valueTickTimes) {
+                for (j in 0 until peoplesOnPipe - 1) {
+                    nextValue--
+                    if (nextValue < 1) nextValue = PIPE_MAX_VALUE
+                }
+            }
+
+            else -> for (tick in 0 until valueTickTimes) {
+                for (j in 0 until peoplesOnPipe - 1) {
+                    nextValue++
+                    if (nextValue > 10) nextValue = PIPE_MIN_VALUE
+                }
+            }
+        }
+        value = nextValue
+    }
+
     fun Pipe.collectAndValueOrCollect() {
         collect()
+        if (delay > BAD_PIPE_DELAY) {
+            value()
+            return
+        }
+
+        recalculateOutputValue()
+        val pipeValuable = (TIME_TO_NOT_COLLECT_SECOND_TIME_WHEN_PING / delay) * value < 96
         when {
-            value == 10 || (TIME_TO_NOT_COLLECT_SECOND_TIME_WHEN_PING / delay) * value < 96 -> value()
+            value == 10 && direction == Direction.Down && peoplesOnPipe > 1 -> collect()
+            value == 10 && direction == Direction.Up -> value()
+            value == 5 && direction == Direction.Down -> value()
             else -> collect()
         }
     }
 
+    fun getShuffledObservedPipes(exclude: Pipe): List<Pipe> {
+        val pipes = observedPipes.toMutableList()
+        pipes.removeAt(exclude.number - 1)
+        pipes.shuffle()
+        return pipes
+    }
+
     fun collectInfoAboutPipes(exclude: Pipe? = null, isFirstTime: Boolean = false) {
         if (!isFirstTime) {
-            var pipesWithDelayHigher1S = 0
+            var pipesWithDelayHigherConst = 0
             observedPipes.forEach {
-                if (it.delay > 1000) pipesWithDelayHigher1S++
+                if (it.delay >= BAD_PIPE_DELAY) pipesWithDelayHigherConst++
             }
-            if (pipesWithDelayHigher1S == 3) with(observedPipes.random()) {
+            if (pipesWithDelayHigherConst == 3) with(observedPipes.random()) {
                 modifier(type = Modifiers.shuffle.name)
                 collectAndValueOrCollect()
                 return
             }
         }
 
-        if (exclude != null) {
-            val pipes = observedPipes.toMutableList()
-            pipes.removeAt(exclude.number - 1)
-            pipes.shuffle()
-            pipes.forEach {
-                it.collectAndValueOrCollect()
-            }
-        } else observedPipes.shuffled().forEach {
+        if (exclude != null) getShuffledObservedPipes(exclude).forEach {
+            it.collectAndValueOrCollect()
+        }
+        else observedPipes.shuffled().forEach {
             it.collectAndValueOrCollect()
         }
     }
 
-    fun Pipe.recalculateOutputValue() {
-        val valueTickTimes = (robot.gameTime - timeOfCollectedValue) / delay
-        if (valueTickTimes == 0) return
-
-        timeOfCollectedValue += delay * valueTickTimes
-        var newValue = value
-
-        when (direction) {
-            Direction.Down -> for (tick in 0 until valueTickTimes) {
-                newValue--
-                if (newValue < 1) newValue = PIPE_MAX_VALUE
-            }
-
-            else -> for (tick in 0 until valueTickTimes) {
-                newValue++
-                if (newValue > 10) newValue = PIPE_MIN_VALUE
-            }
-        }
-        value = newValue
-    }
-
-    fun locallyFindBestPipe(): Pipe {
+    fun findBestPipe(): Pipe {
         var bestPipe = Pipe()
         var bestPipeValue = 0
 
@@ -186,13 +218,19 @@ fun main(args: Array<String>) {
 
             when (it.direction) {
                 Direction.Down -> for (i in 0 until TIME_TO_CALCULATE_ESTIMATE_PIPE_VALUE step it.delay) {
-                    localPipeValue += localValue--
-                    if (localValue < 1) localValue = PIPE_MAX_VALUE
+                    for (j in 0 until it.peoplesOnPipe - 1) {
+                        localValue--
+                        if (localValue < 1) localValue = PIPE_MAX_VALUE
+                    }
+                    localPipeValue += localValue
                 }
 
                 else -> for (i in 0 until TIME_TO_CALCULATE_ESTIMATE_PIPE_VALUE step it.delay) {
-                    localPipeValue += localValue++
-                    if (localValue > 10) localValue = PIPE_MIN_VALUE
+                    for (j in 0 until it.peoplesOnPipe - 1) {
+                        localValue++
+                        if (localValue > 10) localValue = PIPE_MIN_VALUE
+                    }
+                    localPipeValue += localValue
                 }
             }
             if (localPipeValue > bestPipeValue) {
@@ -203,21 +241,71 @@ fun main(args: Array<String>) {
         return bestPipe
     }
 
-    fun checkOtherPipes(exclude: Pipe) {
-        val pipes = observedPipes.toMutableList()
-        pipes.removeAt(exclude.number - 1)
+    fun checkPeopleOnOtherPipes(exclude: Pipe) {
+        val pipes = getShuffledObservedPipes(exclude = exclude)
 
+        var firstPingValue: Int
+        var secondPingValue: Int
+        pipes.forEach {
+            it.value()
+            firstPingValue = it.value
+
+            for (i in 0 until BAD_PIPE_DELAY step exclude.delay) // + 1 ; also maybe use findBestPipeLocally()
+                exclude.collect()
+
+            it.value()
+            secondPingValue = it.value
+
+            if (firstPingValue != secondPingValue)
+                it.collect()
+
+            if (it.delay < exclude.delay) {
+                robot.status = Status.COLLECTING
+                return
+            }
+        }
+        robot.status = Status.COLLECTING
+    }
+
+    fun Pipe.predictNextValue(): Int {
+        var nextValue = value
+        when (direction) {
+            Direction.Down -> for (j in 0 until peoplesOnPipe - 1) {
+                nextValue--
+                if (nextValue < 1) nextValue = PIPE_MAX_VALUE
+            }
+
+            else -> for (j in 0 until peoplesOnPipe - 1) {
+                nextValue++
+                if (nextValue > 10) nextValue = PIPE_MIN_VALUE
+            }
+        }
+        return nextValue
     }
 
     collectInfoAboutPipes(isFirstTime = true)
-    var bestPipe = locallyFindBestPipe()
+    var bestPipe = findBestPipe()
+
     while (true) {
         with(bestPipe) {
             collect()
-            if (delay > MIN_PING_TO_SIT && robot.gameTime % TIME_BETWEEN_REQUESTS <= delay)
-                collectInfoAboutPipes(exclude = this)
 
-            bestPipe = locallyFindBestPipe()
+            val nextValue = predictNextValue()
+
+            if (delay > PING_TO_CHECK
+                && robot.gameTime % TIME_BETWEEN_REQUESTS <= delay
+            ) collectInfoAboutPipes(exclude = this)
+
+            if (robot.gameTime >= 10000
+                && (timeMostPeopleOnPipe - robot.gameTime) >= TIME_TO_THINK_THAT_OTHER_FIND_BEST_PIPE
+                && delay > MIN_PING_TO_SIT
+                && peoplesOnPipe <= 2
+            ) robot.status = Status.PINGING
+
+            if (robot.status == Status.PINGING)
+                checkPeopleOnOtherPipes(exclude = this)
+
+            bestPipe = findBestPipe()
         }
     }
 }
