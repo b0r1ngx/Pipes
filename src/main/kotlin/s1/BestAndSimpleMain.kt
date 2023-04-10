@@ -1,14 +1,16 @@
+package s1
+
 import java.lang.System.currentTimeMillis
 import java.net.HttpURLConnection
 import java.net.URL
 
 const val PIPE_MIN_VALUE = 1
 const val PIPE_MAX_VALUE = 10
-const val MIN_PING_TO_SIT = 300
-const val MIN_TIME_BETWEEN_REQUESTS = 13370
-const val TIME_TO_NOT_COLLECT_SECOND_TIME_WHEN_PING = 6000
+const val MIN_PING_TO_SIT = 450
+const val TIME_BETWEEN_REQUESTS = 60000
 const val TIME_TO_CALCULATE_ESTIMATE_PIPE_VALUE = 12000
-const val TIME_TO_THINK_THAT_OTHER_FIND_BEST_PIPE = 1550 * 3
+const val TIME_TO_NOT_COLLECT_SECOND_TIME_WHEN_PING = 6000
+const val TIME_TO_THINK_THAT_OTHER_FIND_BEST_PIPE = 3 * 1550
 
 val PATTERN = Regex("""\d+""")
 
@@ -20,19 +22,21 @@ data class Robot(
 enum class Direction { Up, Down, Unknown }
 
 data class Pipe(
-    val number: Int = 0, // 1, 2, 3
+    val number: Int = 0,
+
     var value: Int = 0,
     var delay: Int = 3000,
+    var direction: Direction = Direction.Unknown,
+
     var peoplesOnPipe: Int = 0,
-    var timeOfCollectedValue: Int = 0,
-    var direction: Direction = Direction.Unknown
+    var timeOfCollectedValue: Int = 0
 )
 
-enum class Method { GET, PUT, POST }
-
 enum class Modifiers(cost: Int) {
-    reverse(30), double(40), slow(40), shuffle(10), min(10)
+    reverse(40), double(50), slow(40), shuffle(10), min(10)
 }
+
+enum class Method { GET, PUT, POST }
 
 fun main(args: Array<String>) {
     val host = args[0]
@@ -116,22 +120,23 @@ fun main(args: Array<String>) {
         type = type
     )
 
+    fun Pipe.collectAndValueOrCollect() {
+        collect()
+        when {
+            value == 10 || (TIME_TO_NOT_COLLECT_SECOND_TIME_WHEN_PING / delay) * value < 96 -> value()
+            else -> collect()
+        }
+    }
+
     fun collectInfoAboutPipes(exclude: Pipe? = null, isFirstTime: Boolean = false) {
         if (!isFirstTime) {
-            var pipesDelayHigher1S = 0
+            var pipesWithDelayHigher1S = 0
             observedPipes.forEach {
-                if (it.delay > 1000) pipesDelayHigher1S++
+                if (it.delay > 1000) pipesWithDelayHigher1S++
             }
-            if (pipesDelayHigher1S == 3) {
-                val somePipe = observedPipes.random()
-                with(somePipe) {
-                    modifier(type = Modifiers.shuffle.name)
-                    collect()
-                    when {
-                        value == 10 || (TIME_TO_NOT_COLLECT_SECOND_TIME_WHEN_PING / delay) * value < 96 -> value()
-                        else -> collect()
-                    }
-                }
+            if (pipesWithDelayHigher1S == 3) with(observedPipes.random()) {
+                modifier(type = Modifiers.shuffle.name)
+                collectAndValueOrCollect()
                 return
             }
         }
@@ -141,18 +146,10 @@ fun main(args: Array<String>) {
             pipes.removeAt(exclude.number - 1)
             pipes.shuffle()
             pipes.forEach {
-                it.collect()
-                when {
-                    it.value == 10 || (TIME_TO_NOT_COLLECT_SECOND_TIME_WHEN_PING / it.delay) * it.value < 96 -> it.value()
-                    else -> it.collect()
-                }
+                it.collectAndValueOrCollect()
             }
         } else observedPipes.shuffled().forEach {
-            it.collect()
-            when {
-                it.value == 10 || (TIME_TO_NOT_COLLECT_SECOND_TIME_WHEN_PING / it.delay) * it.value < 96 -> it.value()
-                else -> it.collect()
-            }
+            it.collectAndValueOrCollect()
         }
     }
 
@@ -206,39 +203,19 @@ fun main(args: Array<String>) {
         return bestPipe
     }
 
-    collectInfoAboutPipes(isFirstTime = true)
-    var bestPipe = locallyFindBestPipe()
-
-    var collectTimes = 0
-    var notCollectTimes = 0
-    var timeBetweenPingRequests = MIN_TIME_BETWEEN_REQUESTS
-
     fun checkOtherPipes(exclude: Pipe) {
         val pipes = observedPipes.toMutableList()
         pipes.removeAt(exclude.number - 1)
+
     }
 
-    with(bestPipe) {
-        while (true) {
+    collectInfoAboutPipes(isFirstTime = true)
+    var bestPipe = locallyFindBestPipe()
+    while (true) {
+        with(bestPipe) {
             collect()
-
-            if (robot.gameTime % timeBetweenPingRequests <= delay) {
-                if (timeBetweenPingRequests > MIN_TIME_BETWEEN_REQUESTS) {
-                    if (delay > MIN_PING_TO_SIT) collectInfoAboutPipes(exclude = this)
-                } else if (delay > MIN_PING_TO_SIT * 2 || notCollectTimes >= 3) {
-                    collectInfoAboutPipes(exclude = this)
-                    collectTimes++
-                    notCollectTimes = 0
-                } else if (collectTimes >= 3) {
-                    timeBetweenPingRequests = when {
-                        robot.gameTime <= 150000 -> 48000
-                        robot.gameTime <= 200000 -> 36000
-                        robot.gameTime <= 250000 -> 30000
-                        else -> 120000
-                    }
-                    collectTimes = 0
-                } else notCollectTimes++
-            }
+            if (delay > MIN_PING_TO_SIT && robot.gameTime % TIME_BETWEEN_REQUESTS <= delay)
+                collectInfoAboutPipes(exclude = this)
 
             bestPipe = locallyFindBestPipe()
         }
