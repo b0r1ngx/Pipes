@@ -4,12 +4,12 @@ import java.net.URL
 
 const val PIPE_MIN_VALUE = 1
 const val PIPE_MAX_VALUE = 10
-const val SIT_DELAY = 200
-const val CHECK_DELAY = 450
-const val BAD_DELAY = 900
+const val SIT_DELAY = 230
+const val CHECK_DELAY = 290
+const val BAD_DELAY = 830
 const val PIPE_MEAN_DELAY = 1550
 const val TIME_TO_DETERMINE_PIPE_VALUE = 3 * PIPE_MEAN_DELAY
-const val TIME_TO_THINK_BETTER_PIPE_EXISTS = 3 * PIPE_MEAN_DELAY
+const val TIME_TO_THINK_BETTER_PIPE_EXISTS = 3000
 
 val PATTERN = Regex("""\d+""")
 
@@ -28,8 +28,8 @@ data class Pipe(
     var delay: Int = 3000,
     var direction: Direction = Direction.Unknown,
 
-    var peoplesOnPipe: Int = 0,
-    var timeMostPeopleOnPipe: Int = 10000,
+    var peoplesOnPipe: Int = 1,
+    var timeAllPeopleOnPipe: Int = 10000,
     var timeOfCollectedValue: Int = 0
 )
 
@@ -91,36 +91,31 @@ fun main(args: Array<String>) {
                         direction = if (newValue > value) Direction.Up else Direction.Down
 
                     peoplesOnPipe = when (direction) {
-                        Direction.Down -> {
-                            when (val peoplesOnPipe = value - newValue) {
-                                -9 -> 1
-                                -8 -> 2
-                                -7 -> 3
-                                -6 -> 4
-                                else -> peoplesOnPipe
-                            }
+                        Direction.Down -> when (val peoplesOnPipe = value - newValue) {
+                            -9 -> 1
+                            -8 -> 2
+                            -7 -> 3
+                            -6 -> 4
+                            else -> peoplesOnPipe
                         }
 
-                        else -> {
-                            when (val peoplesOnPipe = newValue - value) {
-                                -9 -> 1
-                                -8 -> 2
-                                -7 -> 3
-                                -6 -> 4
-                                else -> peoplesOnPipe
-                            }
+                        else -> when (val peoplesOnPipe = newValue - value) {
+                            -9 -> 1
+                            -8 -> 2
+                            -7 -> 3
+                            -6 -> 4
+                            else -> peoplesOnPipe
                         }
                     }
 
-                    // todo: most -> all, peoplesOnPipe == 4
-                    if (peoplesOnPipe > 2) timeMostPeopleOnPipe = robot.gameTime
+                    if (peoplesOnPipe > 3) timeAllPeopleOnPipe = robot.gameTime
                 }
+
                 value = newValue
+                delay = (currentTimeMillis() - t1).toInt()
 
                 if (method == Method.PUT) {
                     robot.resources += value
-
-                    delay = (currentTimeMillis() - t1).toInt()
                     robot.gameTime += delay
                     timeOfCollectedValue = robot.gameTime
                 }
@@ -179,11 +174,11 @@ fun main(args: Array<String>) {
 
     fun Pipe.collectAndSkipOrValueOrCollect() {
         collect()
-        if (delay > CHECK_DELAY) return
+        if (delay > BAD_DELAY) return
 
         recalculateOutputValue()
         when {
-            delay < SIT_DELAY || (TIME_TO_DETERMINE_PIPE_VALUE / delay) * value > 75 -> collect()
+            delay <= SIT_DELAY || (TIME_TO_DETERMINE_PIPE_VALUE / delay) * value >= 63 -> collect()
             else -> value()
         }
     }
@@ -195,10 +190,11 @@ fun main(args: Array<String>) {
 
     fun collectInfoAboutPipes() = observedPipes.shuffled().forEach {
         it.collectAndSkipOrValueOrCollect()
+        if (it.delay <= SIT_DELAY) return
     }
 
     // todo: not lose points on it, stay tune and just collect and observe by findPipeWithPeoples()
-    // todo: deprecate count bad delay, we always on best, if besty is bad, all other also bad
+    // todo: deprecate count bad delay, we always on best, if best is bad, all other also bad
     fun ifAllPipesBadShuffleBaddestPipe() {
         var badDelay = 0
         observedPipes.forEach { if (it.delay >= BAD_DELAY) badDelay++ }
@@ -208,10 +204,9 @@ fun main(args: Array<String>) {
         }
     }
 
-    // todo: In tests, this function take 1 MS, maybe try to less?
+    // 1 MS MAX
     fun findBestPipe() {
         var bestPipeValue = 0
-
         observedPipes.forEach {
             it.recalculateOutputValue()
 
@@ -242,11 +237,13 @@ fun main(args: Array<String>) {
         }
     }
 
+    // 200 MS
     fun Pipe.pingWithValue(): Int {
         value()
         return value
     }
 
+    // (200 + some excludePipe.collect() + 200 + pipeWhereValueChanged.delay) * 2
     fun scanForPipes(exclude: Pipe) = getObservedPipes(exclude = exclude).forEach {
         val firstPingValue = it.pingWithValue()
         for (i in 0 until BAD_DELAY step exclude.delay) exclude.collect()
@@ -262,8 +259,8 @@ fun main(args: Array<String>) {
         robot.bestPipe.collect()
 
         if (robot.gameTime >= 10000 &&
-            robot.bestPipe.delay >= SIT_DELAY + (robot.gameTime / PIPE_MEAN_DELAY) && // more stable to end of game
-            (robot.gameTime - robot.bestPipe.timeMostPeopleOnPipe) >= TIME_TO_THINK_BETTER_PIPE_EXISTS
+            robot.bestPipe.delay >= CHECK_DELAY + (robot.gameTime / PIPE_MEAN_DELAY) &&
+            (robot.gameTime - robot.bestPipe.timeAllPeopleOnPipe) >= TIME_TO_THINK_BETTER_PIPE_EXISTS
         ) scanForPipes(exclude = robot.bestPipe)
 
         findBestPipe()
