@@ -7,13 +7,14 @@ val PATTERN = Regex("""\d+""")
 
 const val PIPE_MIN_VALUE = 1
 const val PIPE_MAX_VALUE = 10
-const val SIT_DELAY = 230
-const val BAD_DELAY = 830
+const val SIT_DELAY = 215
+const val BAD_DELAY = 835
 const val PIPE_MEAN_DELAY = 1550
 const val TIME_TO_DETERMINE_PIPE_VALUE = 3 * PIPE_MEAN_DELAY
-const val TIME_TO_THINK_BETTER_PIPE_EXISTS = 3000
-const val TIME_TO_WAIT_BETWEEN_SCANS = 6000
-const val TIME_TO_WAIT_BETWEEN_CHANGE_TENDENCY = 12000
+const val TIME_TO_THINK_BETTER_PIPE_EXISTS = 2 * PIPE_MEAN_DELAY
+const val TIME_TO_WAIT_BETWEEN_SCANS = 4 * PIPE_MEAN_DELAY
+const val TIME_TO_WAIT_BETWEEN_CHANGE_TENDENCY = 8 * PIPE_MEAN_DELAY
+const val WARMUP_TIME = 12 * PIPE_MEAN_DELAY
 
 enum class Method { GET, PUT, POST }
 
@@ -34,22 +35,22 @@ fun main(args: Array<String>) {
     robot.locallyFindBestPipe()
 
     while (true) {
+        robot.ifBadPipeModifyBaddest()
         robot.bestPipe.collect()
-        val lastBestPipe = robot.bestPipe
+        val currentBestPipe = robot.bestPipe
         robot.scanForPipesIfNeeded()
-        robot.locallyFindBestPipe()
-        robot.sitOnPositiveTendencyIfNeeded(lastBestPipe)
-        robot.modifyBaddestPipeIfNeeded()
+        robot.sitOnPositiveTendencyIfNeeded(currentBestPipe)
     }
 }
 
 class Robot(apiUrl: String = "", token: String = "") {
     var gameTime: Int = 0
     var resources: Int = 0
-    var bestPipe: Pipe = Pipe(this)
+    lateinit var bestPipe: Pipe
+    lateinit var lastTouchedPipe: Pipe
 
-    private var lastScanTime: Int = 0
-    private var lastTimeChangeTendency: Int = 0
+    private var lastScanTime: Int = WARMUP_TIME
+    private var lastTimeChangeTendency: Int = WARMUP_TIME
 
     private val pipes = listOf(
         Pipe(robot = this, number = 1, apiUrl = apiUrl, token = token),
@@ -65,7 +66,7 @@ class Robot(apiUrl: String = "", token: String = "") {
 
             var localPipeValue = 0
             var localValue = it.value
-            val peoplesOnPipe = if (it == bestPipe) it.peoplesOnPipe else it.peoplesOnPipe - 1
+            val peoplesOnPipe = if (it == lastTouchedPipe) it.peoplesOnPipe else it.peoplesOnPipe - 1
 
             when (it.direction) {
                 Direction.Down -> for (i in 0 until TIME_TO_DETERMINE_PIPE_VALUE step it.delay) {
@@ -91,30 +92,30 @@ class Robot(apiUrl: String = "", token: String = "") {
         }
     }
 
-    fun collectInfoAboutPipes() =
-        pipes.shuffled().forEach {
-            it.collectAndSkipOrValueOrCollect()
-            if (it.delay <= SIT_DELAY) return
-        }
+    fun collectInfoAboutPipes() = pipes.forEach {
+        it.collectAndSkipOrValueOrCollect()
+        if (it.delay <= SIT_DELAY) return
+    }
 
     // todo: not lose points on it, stay tune and just collect and observe by findPipeWithPeoples(),
     // but with this we have a chance to fastest roll new good pipe
-    fun modifyBaddestPipeIfNeeded() {
-        if (bestPipe.delay > BAD_DELAY)
+    fun ifBadPipeModifyBaddest() {
+        if (bestPipe.delay > BAD_DELAY && resources >= 10)
             with(pipes.maxBy { it.delay }) {
                 modifier(type = Modifiers.shuffle)
                 collectAndSkipOrValueOrCollect()
+                locallyFindBestPipe()
             }
     }
 
     fun scanForPipesIfNeeded() {
-        if (gameTime >= 10000
-            && bestPipe.delay >= SIT_DELAY + (gameTime / PIPE_MEAN_DELAY)
+        if (bestPipe.delay >= SIT_DELAY + (gameTime / TIME_TO_THINK_BETTER_PIPE_EXISTS)
             && (gameTime - bestPipe.timeAllPeopleOnPipe) >= TIME_TO_THINK_BETTER_PIPE_EXISTS
             && (gameTime - lastScanTime) >= TIME_TO_WAIT_BETWEEN_SCANS
         ) {
             scan(exclude = bestPipe)
             lastScanTime = gameTime
+            locallyFindBestPipe()
         }
     }
 
@@ -122,7 +123,7 @@ class Robot(apiUrl: String = "", token: String = "") {
     // is that better? (200 + 200 + some excludePipe.collect() + 200 + 200 + pipeWhereValueChanged.delay) =
     // for example, exclude pipe delay = 300, pipeWhereValueChanged 1.55?
     // Time (worst): 200 + 600 + 200 + 200 + 600 + 200 + ((100, 300) -> 200) = 2200
-    private fun scan(exclude: Pipe) = getObservedPipes(exclude = exclude).forEach {
+    private fun scan(exclude: Pipe) = getPipes(exclude = exclude).forEach {
         val firstPingValue = it.pingWithValue()
         for (i in 0 until BAD_DELAY step exclude.delay) exclude.collect()
         val secondPingValue = it.pingWithValue()
@@ -130,14 +131,14 @@ class Robot(apiUrl: String = "", token: String = "") {
         if (it.delay < exclude.delay) return
     }
 
-    private fun getObservedPipes(exclude: Pipe) =
+    private fun getPipes(exclude: Pipe) =
         pipes.toMutableList().apply {
             removeAt(exclude.number - 1)
             shuffle()
         }
 
     fun sitOnPositiveTendencyIfNeeded(pipe: Pipe) {
-        if (pipe == bestPipe // && pipe.peoplesOnPipe > 3
+        if (pipe == bestPipe
             && (gameTime - lastTimeChangeTendency) >= TIME_TO_DETERMINE_PIPE_VALUE
         ) {
             sitOnPositiveTendency()
@@ -146,8 +147,11 @@ class Robot(apiUrl: String = "", token: String = "") {
     }
 
     private fun sitOnPositiveTendency() {
-        if (bestPipe.peoplesOnPipe % 2 == 0 && bestPipe.value % 2 == 1)
-            postpone(delay = (bestPipe.delay + 1) / 4)
+        if (bestPipe.peoplesOnPipe % 2 == 0 && bestPipe.value % 2 == 1) {
+            val delay = (bestPipe.delay + 1) / 4
+            println("Postpone for $delay")
+            postpone(delay = delay)
+        }
     }
 
     private fun postpone(delay: Int) = Thread.sleep(delay.toLong())
@@ -161,20 +165,73 @@ data class Pipe(
     var delay: Int = 3000,
     var direction: Direction = Direction.Unknown,
 
-    var peoplesOnPipe: Int = 1,
-    var timeAllPeopleOnPipe: Int = 10000,
     var timeOfCollectedValue: Int = 0,
+    var peoplesOnPipe: Int = 1,
+    var timeAllPeopleOnPipe: Int = WARMUP_TIME,
 
     val apiUrl: String = "",
     val token: String = ""
 ) {
+    fun collectAndSkipOrValueOrCollect() {
+        collect()
+        if (delay >= BAD_DELAY) return
+
+        recalculateOutputValue()
+        when {
+            delay <= SIT_DELAY || (TIME_TO_DETERMINE_PIPE_VALUE / delay) * value >= 69 -> collect()
+            else -> value()
+        }
+    }
+
+    fun recalculateOutputValue() {
+        val valueTickTimes = (robot.gameTime - timeOfCollectedValue) / delay
+        if (valueTickTimes == 0) return
+
+        timeOfCollectedValue += delay * valueTickTimes
+
+        var nextValue = value
+        val peoplesOnPipe = if (this == robot.lastTouchedPipe) this.peoplesOnPipe else this.peoplesOnPipe - 1
+        when (direction) {
+            Direction.Down -> for (tick in 0 until valueTickTimes) {
+                for (j in 0 until peoplesOnPipe) {
+                    nextValue--
+                    if (nextValue < 1) nextValue = PIPE_MAX_VALUE
+                }
+            }
+
+            else -> for (tick in 0 until valueTickTimes) {
+                for (j in 0 until peoplesOnPipe) {
+                    nextValue++
+                    if (nextValue > 10) nextValue = PIPE_MIN_VALUE
+                }
+            }
+        }
+        value = nextValue
+    }
+
+    fun collect() = sendRequest(
+        method = Method.PUT,
+        url = "$apiUrl/${this.number}",
+    )
+
+    fun value() = sendRequest(
+        method = Method.GET,
+        url = "$apiUrl/${this.number}/value",
+    )
+
+    fun modifier(type: Modifiers) = sendRequest(
+        method = Method.POST,
+        url = "$apiUrl/${this.number}/modifier",
+        type = type
+    )
+
     // todo: mean response delay difference from real pipe delay is 5.5 ms
     private fun sendRequest(
         method: Method,
         url: String,
         type: Modifiers? = null
     ) {
-        val t1 = currentTimeMillis()
+        val startTime = currentTimeMillis()
         with(URL(url).openConnection() as HttpURLConnection) {
             requestMethod = method.name
             setRequestProperty("Authorization", "Bearer $token")
@@ -231,13 +288,16 @@ data class Pipe(
 
                     if (peoplesOnPipe > 3) timeAllPeopleOnPipe = robot.gameTime
                 }
+
                 value = newValue
+                robot.lastTouchedPipe = this@Pipe
+
+                val responseTime = (currentTimeMillis() - startTime).toInt()
+                robot.gameTime += responseTime
 
                 if (method == Method.PUT) {
                     robot.resources += value
-
-                    delay = (currentTimeMillis() - t1).toInt()
-                    robot.gameTime += delay
+                    delay = responseTime
                     timeOfCollectedValue = robot.gameTime
                 }
 
@@ -246,59 +306,6 @@ data class Pipe(
                             "Collected $value in $delay (total: ${robot.resources})"
                 )
             }
-        }
-    }
-
-    fun collect() = sendRequest(
-        method = Method.PUT,
-        url = "$apiUrl/${this.number}",
-    )
-
-    fun value() = sendRequest(
-        method = Method.GET,
-        url = "$apiUrl/${this.number}/value",
-    )
-
-    fun modifier(type: Modifiers) = sendRequest(
-        method = Method.POST,
-        url = "$apiUrl/${this.number}/modifier",
-        type = type
-    )
-
-    fun recalculateOutputValue() {
-        val valueTickTimes = (robot.gameTime - timeOfCollectedValue) / delay
-        if (valueTickTimes == 0) return
-
-        timeOfCollectedValue += delay * valueTickTimes
-
-        var nextValue = value
-        val peoplesOnPipe = if (this == robot.bestPipe) this.peoplesOnPipe else this.peoplesOnPipe - 1
-        when (direction) {
-            Direction.Down -> for (tick in 0 until valueTickTimes) {
-                for (j in 0 until peoplesOnPipe) {
-                    nextValue--
-                    if (nextValue < 1) nextValue = PIPE_MAX_VALUE
-                }
-            }
-
-            else -> for (tick in 0 until valueTickTimes) {
-                for (j in 0 until peoplesOnPipe) {
-                    nextValue++
-                    if (nextValue > 10) nextValue = PIPE_MIN_VALUE
-                }
-            }
-        }
-        value = nextValue
-    }
-
-    fun collectAndSkipOrValueOrCollect() {
-        collect()
-        if (delay > BAD_DELAY) return
-
-        recalculateOutputValue()
-        when {
-            delay <= SIT_DELAY || (TIME_TO_DETERMINE_PIPE_VALUE / delay) * value >= 69 -> collect()
-            else -> value()
         }
     }
 

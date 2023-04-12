@@ -26,12 +26,13 @@ fun Pipe.tendency(): Pair<Pipe, Int> {
 }
 
 fun main() {
+    val robot = Robot()
     val variousPipes = mutableListOf<Pipe>()
     var pipeNumber = 1
     for (value in 1..10)
 //            for (delay in 0 until 10)
             variousPipes += Pipe(
-                robot = Robot(),
+                robot = robot,
                 number = pipeNumber++,
 
                 value = value,
