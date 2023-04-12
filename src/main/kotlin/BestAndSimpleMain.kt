@@ -139,7 +139,7 @@ fun main(args: Array<String>) {
                     }
                 }
 
-                if (peoplesOnPipe >= 3) timeAllPeopleOnPipe = robot.gameTime
+                if (peoplesOnPipe > 3) timeAllPeopleOnPipe = robot.gameTime
             }
 
             value = newValue
