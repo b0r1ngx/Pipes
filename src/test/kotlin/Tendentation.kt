@@ -31,6 +31,7 @@ fun main() {
     for (value in 1..10)
 //            for (delay in 0 until 10)
             variousPipes += Pipe(
+                robot = Robot(),
                 number = pipeNumber++,
 
                 value = value,

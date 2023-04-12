@@ -43,7 +43,7 @@ fun main(args: Array<String>) {
     }
 }
 
-class Robot(apiUrl: String, token: String) {
+class Robot(apiUrl: String = "", token: String = "") {
     var gameTime: Int = 0
     var resources: Int = 0
     var bestPipe: Pipe = Pipe(this)
