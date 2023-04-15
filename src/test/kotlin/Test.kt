@@ -1,5 +1,3 @@
-import kotlin.math.abs
-
 //fun main() {
 //    val observedPipes = listOf(
 //        Pipe(1), Pipe(2), Pipe(3)
@@ -28,28 +26,32 @@ import kotlin.math.abs
 //    println("second: ${robot.bestPipe.number}")
 //}
 
-fun main(args: Array<String>) {
-    val value = args[0].toInt()
-    val newValue = args[1].toInt()
-    var direction = Direction.Unknown
-    if (abs(newValue - value) <= 4)
-        direction = if (newValue > value) Direction.Up else Direction.Down
-    val peoplesOnPipe = when (direction) {
-        Direction.Down -> when (val peoplesOnPipe = value - newValue) {
-            -9 -> 1
-            -8 -> 2
-            -7 -> 3
-            -6 -> 4
-            else -> peoplesOnPipe
-        }
+//fun main(args: Array<String>) {
+//    val value = args[0].toInt()
+//    val newValue = args[1].toInt()
+//    var direction = Direction.Unknown
+//    if (abs(newValue - value) <= 4)
+//        direction = if (newValue > value) Direction.Up else Direction.Down
+//    val peoplesOnPipe = when (direction) {
+//        Direction.Down -> when (val peoplesOnPipe = value - newValue) {
+//            -9 -> 1
+//            -8 -> 2
+//            -7 -> 3
+//            -6 -> 4
+//            else -> peoplesOnPipe
+//        }
+//
+//        else -> when (val peoplesOnPipe = newValue - value) {
+//            -9 -> 1
+//            -8 -> 2
+//            -7 -> 3
+//            -6 -> 4
+//            else -> peoplesOnPipe
+//        }
+//    }
+//    println(peoplesOnPipe)
+//}
 
-        else -> when (val peoplesOnPipe = newValue - value) {
-            -9 -> 1
-            -8 -> 2
-            -7 -> 3
-            -6 -> 4
-            else -> peoplesOnPipe
-        }
-    }
-    println(peoplesOnPipe)
+fun main() {
+    for (i in 0 until 1000 step 1337) println("a")
 }

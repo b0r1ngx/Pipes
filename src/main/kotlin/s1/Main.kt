@@ -1,3 +1,5 @@
+package s1
+
 import java.lang.System.currentTimeMillis
 import java.net.HttpURLConnection
 import java.net.URL
@@ -7,12 +9,12 @@ val PATTERN = Regex("""\d+""")
 
 const val PIPE_MIN_VALUE = 1
 const val PIPE_MAX_VALUE = 10
-const val SIT_DELAY = 255
-const val STOP_COLLECT_DELAY = 500
-const val MEAN_DELAY = 1550
-const val TIME_TO_THINK_BETTER_PIPE_EXISTS = 4000
-const val TIME_TO_WAIT_BETWEEN_SCANS = 8000
-const val WARMUP_TIME = 12000
+const val SIT_DELAY = 245
+const val SATISFACTORY_DELAY = 500
+const val PIPE_MEAN_DELAY = 1550
+const val TIME_TO_THINK_BETTER_PIPE_EXISTS = 2 * PIPE_MEAN_DELAY
+const val TIME_TO_WAIT_BETWEEN_SCANS = 3 * PIPE_MEAN_DELAY
+const val WARMUP_TIME = 4 * PIPE_MEAN_DELAY
 
 lateinit var apiUrl: String
 lateinit var token: String
@@ -25,22 +27,14 @@ fun main(args: Array<String>) {
     apiUrl = "http://${args[0]}/api/pipe"
     token = args[1]
 
-    with(Robot()) {
-        collectInfoAboutPipes()
-        locallyFindBestPipe()
-
-        while (true) {
-            isScanUsed = false
-            isTendencyUsed = false
-
-            bestPipe.collect()
-            scanForPipesIfNeeded()
-            fixTendencyIfNeeded()
-
-            if (!(isScanUsed || isTendencyUsed)
-                && (gameTime - lastTimeChangeTendency) >= TIME_TO_WAIT_BETWEEN_SCANS
-            ) locallyFindBestPipe()
-        }
+    val robot = Robot()
+    robot.collectInfoAboutPipes()
+    robot.locallyFindBestPipe()
+    while (true) {
+        robot.bestPipe.collect()
+        val currentBestPipe = robot.bestPipe
+        robot.scanForPipesIfNeeded()
+        robot.fixTendencyIfNeeded(currentBestPipe)
     }
 }
 
@@ -50,12 +44,9 @@ class Robot {
     lateinit var lastTouchedPipe: Pipe
 
     private var lastScanTime: Int = WARMUP_TIME
-    var lastTimeChangeTendency: Int = WARMUP_TIME
+    private var lastTimeFixTendency: Int = WARMUP_TIME
 
-    var isScanUsed = false
-    var isTendencyUsed = false
-
-    val pipes = listOf(
+    private val pipes = listOf(
         Pipe(robot = this, number = 1),
         Pipe(robot = this, number = 2),
         Pipe(robot = this, number = 3)
@@ -67,12 +58,12 @@ class Robot {
         pipes.forEach {
             it.recalculateOutputValue()
 
-            var localPipeValue = 0
-            var localValue = it.value
             val peoplesOnPipe =
-                if (it == lastTouchedPipe || it.peoplesOnPipe <= 1) it.peoplesOnPipe
+                if (it == lastTouchedPipe || it.peoplesOnPipe == 1) it.peoplesOnPipe
                 else it.peoplesOnPipe - 1
 
+            var localPipeValue = 0
+            var localValue = it.value
             when (it.direction) {
                 Direction.Down -> for (i in 0 until WARMUP_TIME step it.delay) {
                     for (j in 0 until peoplesOnPipe) {
@@ -99,24 +90,21 @@ class Robot {
 
     fun collectInfoAboutPipes() = pipes.shuffled().forEach {
         it.collect()
-        if (it.delay <= STOP_COLLECT_DELAY) return
+        if (it.delay <= SATISFACTORY_DELAY) return
     }
 
     fun scanForPipesIfNeeded() {
         if (bestPipe.delay >= SIT_DELAY + (gameTime / TIME_TO_THINK_BETTER_PIPE_EXISTS)
             && (gameTime - bestPipe.timeAllPeopleOnPipe) >= TIME_TO_THINK_BETTER_PIPE_EXISTS
-            && (gameTime - lastTimeChangeTendency) >= TIME_TO_WAIT_BETWEEN_SCANS
             && (gameTime - lastScanTime) >= TIME_TO_WAIT_BETWEEN_SCANS
         ) {
-            betterScan()
+            scan()
             lastScanTime = gameTime
             locallyFindBestPipe()
-            isScanUsed = true
         }
     }
 
-    // 200 + 200 + 200 + 200 for 0 value
-    private fun betterScan(exclude: Pipe = bestPipe) = pipes(exclude = exclude).forEach {
+    private fun scan(exclude: Pipe = bestPipe) = getPipes(exclude = exclude).forEach {
         val firstPing = it.ping()
         val secondPing = it.ping()
         if (firstPing != secondPing) {
@@ -138,33 +126,30 @@ class Robot {
     }
 
     private var pipeOrder = 0
-    private fun pipes(exclude: Pipe) = pipes.toMutableList().apply {
+    private fun getPipes(exclude: Pipe) = pipes.toMutableList().apply {
         removeAt(exclude.number - 1)
         if (pipeOrder++ % 2 == 0) this[0] = this[1].also { this[1] = this[0] }
     }
 
-    fun fixTendencyIfNeeded() {
-        if ((gameTime - lastTimeChangeTendency) >= MEAN_DELAY
-            && (gameTime - lastScanTime) >= TIME_TO_WAIT_BETWEEN_SCANS
+    fun fixTendencyIfNeeded(pipe: Pipe) {
+        if (pipe == bestPipe && bestPipe.value % 2 == 1 && bestPipe.peoplesOnPipe % 2 == 0
+            && (gameTime - lastTimeFixTendency) >= 10 * bestPipe.delay
         ) {
             fixTendency()
-            lastTimeChangeTendency = gameTime
-            isTendencyUsed = true
+            lastTimeFixTendency = gameTime
         }
     }
 
     private fun fixTendency() {
         while (bestPipe.value % 2 == 1) {
-            if (bestPipe.peoplesOnPipe % 2 == 0) {
-                val delay = (bestPipe.delay + 1) / 6
-                postpone(delay = delay)
+            if (bestPipe.peoplesOnPipe % 2 == 0 && bestPipe.predictedNextValue in (1..5)) {
+                val delay = (bestPipe.delay + 1) / 7
+                Thread.sleep(delay.toLong())
                 println("Postpone for $delay")
             }
             bestPipe.collect()
         }
     }
-
-    private fun postpone(delay: Int) = Thread.sleep(delay.toLong())
 }
 
 data class Pipe(
@@ -175,9 +160,10 @@ data class Pipe(
     var delay: Int = 3000,
     var direction: Direction = Direction.Unknown,
 
-    var timeOfCollectedValue: Int = 0,
     var peoplesOnPipe: Int = 1,
-    var timeAllPeopleOnPipe: Int = WARMUP_TIME
+    var predictedNextValue: Int = 0,
+    var timeOfCollectedValue: Int = 0,
+    var timeAllPeopleOnPipe: Int = WARMUP_TIME,
 ) {
     fun recalculateOutputValue() {
         val valueTickTimes = (robot.gameTime - timeOfCollectedValue) / delay
@@ -185,10 +171,11 @@ data class Pipe(
 
         timeOfCollectedValue += delay * valueTickTimes
 
-        var nextValue = value
         val peoplesOnPipe =
-            if (this == robot.lastTouchedPipe || peoplesOnPipe <= 1) peoplesOnPipe
+            if (this == robot.lastTouchedPipe || peoplesOnPipe == 1) peoplesOnPipe
             else peoplesOnPipe - 1
+
+        var nextValue = value
         when (direction) {
             Direction.Down -> for (tick in 0 until valueTickTimes) {
                 for (j in 0 until peoplesOnPipe) {
@@ -212,7 +199,7 @@ data class Pipe(
         url = "$apiUrl/${this.number}",
     )
 
-    fun value() = sendRequest(
+    private fun value() = sendRequest(
         method = Method.GET,
         url = "$apiUrl/${this.number}/value",
     )
@@ -220,7 +207,7 @@ data class Pipe(
     // todo: mean response delay difference from real pipe delay is 5.5 ms
     private fun sendRequest(
         method: Method,
-        url: String
+        url: String,
     ) {
         val startTime = currentTimeMillis()
         with(URL(url).openConnection() as HttpURLConnection) {
@@ -259,6 +246,21 @@ data class Pipe(
                     }
                 }
 
+                if (peoplesOnPipe in (1..4)) {
+                    var nextValue = newValue
+                    when (direction) {
+                        Direction.Down -> for (j in 0 until peoplesOnPipe) {
+                            nextValue--
+                            if (nextValue < 1) nextValue = PIPE_MAX_VALUE
+                        }
+
+                        else -> for (j in 0 until peoplesOnPipe) {
+                            nextValue++
+                            if (nextValue > 10) nextValue = PIPE_MIN_VALUE
+                        }
+                    }
+                    predictedNextValue = nextValue
+                }
                 if (peoplesOnPipe > 3) timeAllPeopleOnPipe = robot.gameTime
             }
 
